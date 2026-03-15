@@ -104,7 +104,9 @@ export default function HomePage({
       setNewPostText("");
       setSelectedImage(null);
       fetchPosts();
-    } catch (error) { showNotification("Error: Could not create post."); }
+    } catch {
+      showNotification("Error: Could not create post.");
+    }
   };
   const handleAddComment = async (postId, commentText) => {
     if (!commentText || !commentText.trim()) return;
@@ -113,7 +115,9 @@ export default function HomePage({
       if (response.notification) { showNotification(response.notification); }
       setCommentTexts(prev => ({ ...prev, [postId]: '' }));
       fetchPosts();
-    } catch (error) { showNotification("Error: Could not post comment."); }
+    } catch {
+      showNotification("Error: Could not post comment.");
+    }
   };
   const handleApprove = async (postId) => {
     await api.approvePost(postId); fetchPosts();
@@ -125,7 +129,7 @@ export default function HomePage({
     try {
       await api.deletePost(postId);
       fetchPosts();
-    } catch (error) {
+    } catch {
       showNotification("Error: Could not delete post.");
     }
   };

@@ -14,6 +14,7 @@ import shutil
 from database import get_db_connection
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2 import Error as DatabaseError
+from psycopg2 import Error as DatabaseError
 
 # --- ML model paths & lazy loader ---
 VECT_PATH = os.path.join("models", "vectorizer.joblib")
@@ -149,6 +150,7 @@ def get_user_id(username: str, db):
             return None
         return user_row["id"]
     except DatabaseError as e:
+    except DatabaseError as e:
         print(f"Error in get_user_id: {e}")
         safe_close_cursor(cursor)
         return None
@@ -170,9 +172,10 @@ def signup(user: UserSignUp):
         cursor = db.cursor()
         hashed_password = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt())
         query = "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)"
-        cursor.execute(query, (user.username, user.email, hashed_password))
+        cursor.execute(query, (user.username, user.email, hashed_password.decode("utf-8")))
         db.commit()
         return {"status": "success", "message": "User created successfully!"}
+    except DatabaseError as e:
     except DatabaseError as e:
         db.rollback()
         raise HTTPException(status_code=400, detail="Username or email already exists")
@@ -202,7 +205,11 @@ def login(user: UserLogin):
         except Exception:
             pass
 
-    if db_user and bcrypt.checkpw(user.password.encode("utf-8"), db_user["password"].encode("utf-8")):
+    stored_password = db_user["password"] if db_user else None
+    if isinstance(stored_password, str):
+        stored_password = stored_password.encode("utf-8")
+
+    if db_user and stored_password and bcrypt.checkpw(user.password.encode("utf-8"), stored_password):
         return {"status": "success", "message": "Login successful!", "username": db_user["username"]}
     else:
         raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -261,6 +268,7 @@ def send_message(msg: Message):
                 safe_close_cursor(cursor)
 
     except DatabaseError as e:
+    except DatabaseError as e:
         try:
             db.rollback()
         except Exception:
@@ -293,12 +301,15 @@ def get_feed_internal(username: str, db):
         try:
             cursor = db.cursor()
             hashed_password = bcrypt.hashpw(b"bot_password", bcrypt.gensalt())
-            cursor.execute("INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
-                           ("Dana", "dana@bot.com", hashed_password))
+            cursor.execute(
+                "INSERT INTO users (username, email, password) VALUES (%s, %s, %s) RETURNING id",
+                ("Dana", "dana@bot.com", hashed_password.decode("utf-8")),
+            )
+            bot_id = cursor.fetchone()[0]
             db.commit()
-            bot_id = cursor.lastrowid
             safe_close_cursor(cursor)
             print("Created 'Dana' bot user.")
+        except DatabaseError as e:
         except DatabaseError as e:
             print(f"Could not create bot user 'Dana': {e}")
             try:
@@ -360,10 +371,21 @@ def create_tables():
             )
         """)
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS posts (
+                id SERIAL PRIMARY KEY,
                 id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
                 text TEXT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending', 'blocked')),
                 status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending', 'blocked')),
                 parent_id INT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -374,9 +396,11 @@ def create_tables():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id SERIAL PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL UNIQUE,
                 bio TEXT,
                 profile_image_url VARCHAR(255),
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -384,9 +408,11 @@ def create_tables():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id SERIAL PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 sender_id INT NOT NULL,
                 receiver_id INT NOT NULL,
                 text TEXT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending')),
                 status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -395,6 +421,7 @@ def create_tables():
         """)
         db.commit()
         print("Tables (posts, user_profiles, chat_messages) checked/created successfully.")
+    except DatabaseError as e:
     except DatabaseError as e:
         print(f"Error creating tables: {e}")
     finally:
@@ -434,9 +461,10 @@ def create_post(post: NewPost):
     new_post_id = None
     cursor = None
     try:
-        cursor = db.cursor(dictionary=True)
-        query = "INSERT INTO posts (user_id, text, status, parent_id) VALUES (%s, %s, %s, %s)"
+        cursor = db.cursor()
+        query = "INSERT INTO posts (user_id, text, status, parent_id) VALUES (%s, %s, %s, %s) RETURNING id"
         cursor.execute(query, (user_id, post.text, status, post.parent_id))
+        new_post_id = cursor.fetchone()[0]
         db.commit()
         new_post_id = cursor.lastrowid
     except DatabaseError as e:
@@ -558,6 +586,7 @@ def delete_post(post_id: int):
         db.commit()
         affected = cursor.rowcount
     except DatabaseError as e:
+    except DatabaseError as e:
         try:
             db.rollback()
         except Exception:
@@ -654,9 +683,10 @@ def update_profile(username: str, profile: ProfileUpdate):
         query = """
             INSERT INTO user_profiles (user_id, bio, profile_image_url)
             VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                bio = VALUES(bio),
-                profile_image_url = VALUES(profile_image_url)
+            ON CONFLICT (user_id) DO UPDATE SET
+                bio = EXCLUDED.bio,
+                profile_image_url = EXCLUDED.profile_image_url,
+                updated_at = CURRENT_TIMESTAMP
         """
         cursor.execute(query, (user_id, profile.bio, profile.profile_image_url))
         db.commit()

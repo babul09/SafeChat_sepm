@@ -5,10 +5,10 @@ SafeChat is a full-stack demo that showcases a small social/chat app protected b
 **What you get**
 - **Toxicity detection:** A trained TF‑IDF + Logistic Regression model to detect toxic text.
 - **Moderation rules:** Private chat blocks toxic messages; posts/comments can be marked pending.
-- **Full-stack example:** FastAPI backend, MySQL storage, React frontend (Vite + Tailwind).
+- **Full-stack example:** FastAPI backend, Supabase/PostgreSQL storage, React frontend (Vite + Tailwind).
 
 **Tech Stack**
-- **Backend:** `Python`, `FastAPI`, `uvicorn`, `scikit-learn`, `joblib`, `pandas`, `mysql-connector-python`, `bcrypt`.
+- **Backend:** `Python`, `FastAPI`, `uvicorn`, `scikit-learn`, `joblib`, `pandas`, `psycopg2`, `bcrypt`.
 - **Frontend:** `React` + `Vite`, `Tailwind CSS`, `@heroicons/react`.
 
 **Repository layout (important files)**
@@ -20,7 +20,7 @@ SafeChat is a full-stack demo that showcases a small social/chat app protected b
 
 Prerequisites:
 - Install Python 3.9+ and Node.js (16+ recommended).
-- MySQL server running locally (or update `backend-ml/database.py` to point to your DB).
+- Supabase (free tier) project with Postgres connection string (or local Postgres).
 
 1) Backend — create a virtual environment, install dependencies and run
 
@@ -30,8 +30,8 @@ python -m venv venv
 venv\Scripts\Activate.ps1
 # If you use cmd.exe: venv\Scripts\activate.bat
 
-# Install required python packages (if you have a `requirements.txt` use it):
-pip install fastapi uvicorn scikit-learn joblib pandas mysql-connector-python bcrypt python-multipart
+# Install required python packages:
+pip install -r requirements.txt
 
 # Start the API server (development):
 uvicorn app:app --reload --host 127.0.0.1 --port 8000
@@ -50,21 +50,16 @@ npm run dev
 The frontend dev server runs at `http://localhost:5173` (Vite default).
 
 3) Database setup
-- The project uses MySQL. The default connection in `backend-ml/database.py` points to:
-  - `host='localhost'`
-  - `user='root'`
-  - `password=' '` (a placeholder — replace with your actual password)
-  - `database='safechat_db'`
+- The project uses PostgreSQL and is configured for Supabase.
+- Copy `backend-ml/.env.example` to `.env` and set `DATABASE_URL` from your Supabase project.
+- Example format:
 
-- Create the database and user before first run (example using MySQL shell):
-
-```sql
-CREATE DATABASE safechat_db;
--- CREATE USER 'safechat'@'localhost' IDENTIFIED BY 'your_password';
--- GRANT ALL PRIVILEGES ON safechat_db.* TO 'safechat'@'localhost';
+```dotenv
+DATABASE_URL=postgresql://postgres:[YOUR_PASSWORD]@db.[YOUR_PROJECT_REF].supabase.co:5432/postgres
+DB_SSLMODE=require
 ```
 
-- Edit `backend-ml/database.py` to set your DB credentials (or modify it to read from environment variables).
+- Tables are created automatically on backend startup.
 
 4) Model training
 - If you want to re-train the classifier (the repo includes `data/train.csv`):

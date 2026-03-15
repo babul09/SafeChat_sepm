@@ -1,9 +1,11 @@
 // src/ChatPanel.jsx
 import { useState, useEffect, useRef, useCallback } from 'react'; // <-- 1. ADD useRef
+import { useState, useEffect, useRef, useCallback } from 'react'; // <-- 1. ADD useRef
 import { PhoneIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
 import { supabase } from './lib/supabaseClient';
 
 // --- API Configuration ---
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     // NEW: API now requires the username to fetch the correct feed
@@ -41,6 +43,7 @@ export default function ChatPanel({ onClose, currentUser, showNotification }) {
 
   // --- Functions ---
   const fetchMessages = useCallback(async () => {
+  const fetchMessages = useCallback(async () => {
     if (!currentUser) return; // Don't fetch if user isn't set yet
     try {
       // NEW: Pass the current user's name to fetch their messages
@@ -51,6 +54,7 @@ export default function ChatPanel({ onClose, currentUser, showNotification }) {
     } catch (error) { 
       console.error("Failed to fetch messages:", error); 
     }
+  }, [currentUser]);
   }, [currentUser]);
 
   useEffect(() => {

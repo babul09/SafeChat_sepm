@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 
 // --- API Configuration (No Changes) ---
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     signup: (username, email, password) => fetch(`${API_BASE_URL}/signup`, {
         method: 'POST',

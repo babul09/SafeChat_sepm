@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+scikit-learn
+joblib
+pandas
+bcrypt
+python-multipart
+psycopg2-binary
+python-dotenv

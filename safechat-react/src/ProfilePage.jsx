@@ -4,7 +4,7 @@ import { UserCircleIcon, CameraIcon } from '@heroicons/react/24/outline';
 import Sidebar from './Sidebar'; // We need the sidebar for the layout
 
 // --- API Configuration for Profile ---
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     getProfile: (username) => fetch(`${API_BASE_URL}/get_profile/${username}`).then(res => res.json()),
     

@@ -9,7 +9,7 @@ import Sidebar from './Sidebar';
 import { TrashIcon } from '@heroicons/react/24/outline';
 
 // --- API Configuration ---
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     getPosts: () => fetch(`${API_BASE_URL}/get_posts`).then(res => res.json()),
     createPost: (user, text, parent_id = null) => fetch(`${API_BASE_URL}/create_post`, {
@@ -86,7 +86,9 @@ export default function HomePage({
       setNewPostText("");
       setSelectedImage(null);
       fetchPosts();
-    } catch (error) { showNotification("Error: Could not create post."); }
+    } catch {
+      showNotification("Error: Could not create post.");
+    }
   };
   const handleAddComment = async (postId, commentText) => {
     if (!commentText || !commentText.trim()) return;
@@ -95,7 +97,9 @@ export default function HomePage({
       if (response.notification) { showNotification(response.notification); }
       setCommentTexts(prev => ({ ...prev, [postId]: '' }));
       fetchPosts();
-    } catch (error) { showNotification("Error: Could not post comment."); }
+    } catch {
+      showNotification("Error: Could not post comment.");
+    }
   };
   const handleApprove = async (postId) => {
     await api.approvePost(postId); fetchPosts();
@@ -107,7 +111,7 @@ export default function HomePage({
     try {
       await api.deletePost(postId);
       fetchPosts();
-    } catch (error) {
+    } catch {
       showNotification("Error: Could not delete post.");
     }
   };

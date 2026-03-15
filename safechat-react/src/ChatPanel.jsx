@@ -1,9 +1,10 @@
 // src/ChatPanel.jsx
-import { useState, useEffect, useRef } from 'react'; // <-- 1. ADD useRef
+import { useState, useEffect, useRef, useCallback } from 'react'; // <-- 1. ADD useRef
 import { PhoneIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
+import { supabase } from './lib/supabaseClient';
 
 // --- API Configuration ---
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     // NEW: API now requires the username to fetch the correct feed
     getMessages: (username) => fetch(`${API_BASE_URL}/get_feed/${username}`).then(res => res.json()),
@@ -39,7 +40,7 @@ export default function ChatPanel({ onClose, currentUser, showNotification }) {
   // ---------------------------------
 
   // --- Functions ---
-  const fetchMessages = async () => {
+  const fetchMessages = useCallback(async () => {
     if (!currentUser) return; // Don't fetch if user isn't set yet
     try {
       // NEW: Pass the current user's name to fetch their messages
@@ -50,13 +51,30 @@ export default function ChatPanel({ onClose, currentUser, showNotification }) {
     } catch (error) { 
       console.error("Failed to fetch messages:", error); 
     }
-  };
+  }, [currentUser]);
 
   useEffect(() => {
-    fetchMessages(); // Fetch messages when component loads
-    const interval = setInterval(fetchMessages, 3000); // Refresh every 3 seconds
-    return () => clearInterval(interval); // Cleanup timer
-  }, [currentUser]); // Re-run if the user changes
+    fetchMessages();
+
+    if (!supabase || !currentUser) {
+      return;
+    }
+
+    const channel = supabase
+      .channel(`chat_messages_feed_${currentUser}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_messages' },
+        () => {
+          fetchMessages();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchMessages, currentUser]);
 
   // --- 4. UPDATE useEffect TO SCROLL ---
   // This scrolls when messages load or new messages are added

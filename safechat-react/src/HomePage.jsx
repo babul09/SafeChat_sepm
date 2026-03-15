@@ -1,5 +1,5 @@
 // src/HomePage.jsx
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import ChatPanel from './ChatPanel';
 import NotificationsPanel from './NotificationsPanel';
 import HeartIcon from './icons/HeartIcon';
@@ -7,9 +7,10 @@ import CommentIcon from './icons/CommentIcon';
 import ImageIcon from './icons/ImageIcon';
 import Sidebar from './Sidebar';
 import { TrashIcon } from '@heroicons/react/24/outline';
+import { supabase } from './lib/supabaseClient';
 
 // --- API Configuration ---
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     getPosts: () => fetch(`${API_BASE_URL}/get_posts`).then(res => res.json()),
     createPost: (user, text, parent_id = null) => fetch(`${API_BASE_URL}/create_post`, {
@@ -42,7 +43,7 @@ export default function HomePage({
   const [commentTexts, setCommentTexts] = useState({});
 
   // --- Functions ---
-  const fetchPosts = async () => {
+  const fetchPosts = useCallback(async () => {
     try {
       const fetchedPosts = await api.getPosts();
       if (Array.isArray(fetchedPosts)) {
@@ -52,12 +53,29 @@ export default function HomePage({
        console.error("Failed to fetch posts:", error);
        setPosts([]);
     }
-  };
+  }, []);
   useEffect(() => {
     fetchPosts();
-    const interval = setInterval(fetchPosts, 5000); // Auto-refresh
-    return () => clearInterval(interval);
-  }, []);
+
+    if (!supabase) {
+      return;
+    }
+
+    const channel = supabase
+      .channel('posts_feed_updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'posts' },
+        () => {
+          fetchPosts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchPosts]);
 
   // 2. THIS IS THE FIX for the "Like" button
   const handleLike = (postId, postUser) => {

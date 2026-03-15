@@ -13,7 +13,7 @@ import shutil
 # --- Local Imports ---
 from database import get_db_connection
 from fastapi.middleware.cors import CORSMiddleware
-from mysql.connector import Error as MySQLError
+from psycopg2 import Error as DatabaseError
 
 # --- ML model paths & lazy loader ---
 VECT_PATH = os.path.join("models", "vectorizer.joblib")
@@ -148,7 +148,7 @@ def get_user_id(username: str, db):
         if not user_row:
             return None
         return user_row["id"]
-    except MySQLError as e:
+    except DatabaseError as e:
         print(f"Error in get_user_id: {e}")
         safe_close_cursor(cursor)
         return None
@@ -173,7 +173,7 @@ def signup(user: UserSignUp):
         cursor.execute(query, (user.username, user.email, hashed_password))
         db.commit()
         return {"status": "success", "message": "User created successfully!"}
-    except MySQLError as e:
+    except DatabaseError as e:
         db.rollback()
         raise HTTPException(status_code=400, detail="Username or email already exists")
     finally:
@@ -260,7 +260,7 @@ def send_message(msg: Message):
             finally:
                 safe_close_cursor(cursor)
 
-    except MySQLError as e:
+    except DatabaseError as e:
         try:
             db.rollback()
         except Exception:
@@ -299,7 +299,7 @@ def get_feed_internal(username: str, db):
             bot_id = cursor.lastrowid
             safe_close_cursor(cursor)
             print("Created 'Dana' bot user.")
-        except MySQLError as e:
+        except DatabaseError as e:
             print(f"Could not create bot user 'Dana': {e}")
             try:
                 db.rollback()
@@ -351,11 +351,20 @@ def create_tables():
     try:
         cursor = db.cursor()
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS posts (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
                 text TEXT NOT NULL,
-                status ENUM('approved', 'pending', 'blocked') DEFAULT 'approved',
+                status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending', 'blocked')),
                 parent_id INT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -364,21 +373,21 @@ def create_tables():
         """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_profiles (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL UNIQUE,
                 bio TEXT,
                 profile_image_url VARCHAR(255),
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
-                id INT AUTO_INCREMENT PRIMARY KEY,
+                id SERIAL PRIMARY KEY,
                 sender_id INT NOT NULL,
                 receiver_id INT NOT NULL,
                 text TEXT NOT NULL,
-                status ENUM('approved', 'pending') DEFAULT 'approved',
+                status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
@@ -386,7 +395,7 @@ def create_tables():
         """)
         db.commit()
         print("Tables (posts, user_profiles, chat_messages) checked/created successfully.")
-    except MySQLError as e:
+    except DatabaseError as e:
         print(f"Error creating tables: {e}")
     finally:
         safe_close_cursor(cursor)
@@ -430,7 +439,7 @@ def create_post(post: NewPost):
         cursor.execute(query, (user_id, post.text, status, post.parent_id))
         db.commit()
         new_post_id = cursor.lastrowid
-    except MySQLError as e:
+    except DatabaseError as e:
         try:
             db.rollback()
         except Exception:
@@ -548,7 +557,7 @@ def delete_post(post_id: int):
         cursor.execute("DELETE FROM posts WHERE id = %s", (post_id,))
         db.commit()
         affected = cursor.rowcount
-    except MySQLError as e:
+    except DatabaseError as e:
         try:
             db.rollback()
         except Exception:

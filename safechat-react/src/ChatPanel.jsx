@@ -42,6 +42,7 @@ export default function ChatPanel({
   currentUser,
   showNotification,
   initialActiveUser = null,
+  refreshToken = 0,
 }) {
   const [activeUser, setActiveUser] = useState(initialActiveUser || '');
   const [availableUsers, setAvailableUsers] = useState([]);
@@ -232,6 +233,11 @@ export default function ChatPanel({
   useEffect(() => {
     setIsOtherUserTyping(false);
   }, [activeUser]);
+
+  useEffect(() => {
+    if (!refreshToken) return;
+    scheduleFetchMessages();
+  }, [refreshToken, scheduleFetchMessages]);
 
   const handleSendMessage = async (e) => {
     e.preventDefault();

@@ -46,6 +46,7 @@ export default function HomePage({
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [posts, setPosts] = useState([]);
   const [chatTarget, setChatTarget] = useState(null);
+  const [chatRefreshToken, setChatRefreshToken] = useState(0);
   const [registeredUsers, setRegisteredUsers] = useState([]);
   const [newPostText, setNewPostText] = useState("");
   const [selectedImage, setSelectedImage] = useState(null);
@@ -92,7 +93,13 @@ export default function HomePage({
             return;
           }
           seenMessageIdsRef.current.add(note.id);
-          showNotification(`New message: ${note.text}`, { type: 'message', user: note.from_user });
+
+          const isSameOpenConversation = isChatOpen && chatTarget && note.from_user === chatTarget;
+          if (isSameOpenConversation) {
+            setChatRefreshToken((prev) => prev + 1);
+          } else {
+            showNotification(`New message: ${note.text}`, { type: 'message', user: note.from_user });
+          }
         });
 
         const lastIncoming = incoming[incoming.length - 1];
@@ -134,7 +141,7 @@ export default function HomePage({
       clearInterval(notificationInterval);
       supabase.removeChannel(channel);
     };
-  }, [fetchPosts, user, showNotification]);
+  }, [fetchPosts, user, showNotification, isChatOpen, chatTarget]);
 
   useEffect(() => {
     if (!chatTargetUser) return;
@@ -367,6 +374,7 @@ export default function HomePage({
                     <button
                       onClick={() => {
                         setChatTarget(item.username);
+                        setChatRefreshToken((prev) => prev + 1);
                         setIsChatOpen(true);
                       }}
                       className="rounded-full bg-green-500 px-3 py-1 text-sm font-semibold text-black hover:bg-green-600"
@@ -388,6 +396,7 @@ export default function HomePage({
           currentUser={user}
           showNotification={showNotification}
           initialActiveUser={chatTarget}
+          refreshToken={chatRefreshToken}
         />
       )}
       {isNotificationsOpen && <NotificationsPanel onClose={() => setIsNotificationsOpen(false)} notifications={notifications} />}

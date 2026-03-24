@@ -23,7 +23,7 @@ const api = {
 };
 // -----------------------------------------
 
-export default function ProfilePage({ user, onLogout, onNavigateHome, onNavigateToProfile }) { 
+export default function ProfilePage({ user, onLogout, onNavigateHome, onNavigateToProfile, onNavigateToFriends }) { 
   const [bio, setBio] = useState(""); 
   const [email, setEmail] = useState(""); 
   const [profileImagePreview, setProfileImagePreview] = useState(null); // Local preview URL
@@ -126,6 +126,7 @@ export default function ProfilePage({ user, onLogout, onNavigateHome, onNavigate
             onShowChat={() => alert("Chat only available on Home page for now")}
             onNavigateToHome={onNavigateHome} 
             onNavigateToProfile={onNavigateToProfile}
+            onNavigateToFriends={onNavigateToFriends}
           />
            <div className="absolute bottom-4 p-4">
              <button onClick={onLogout} className="flex items-center gap-4 rounded-full p-3 text-lg text-gray-200 transition-all hover:bg-neutral-800 hover:text-green-500">

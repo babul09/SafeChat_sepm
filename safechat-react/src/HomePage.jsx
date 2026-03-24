@@ -13,6 +13,11 @@ import { supabase } from './lib/supabaseClient';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const api = {
     getPosts: () => fetch(`${API_BASE_URL}/get_posts`).then(res => res.json()),
+    getUsers: (username) => fetch(`${API_BASE_URL}/get_users/${username}`).then(res => res.json()),
+    getChatNotifications: (username, since) => {
+      const query = since ? `?since=${encodeURIComponent(since)}` : '';
+      return fetch(`${API_BASE_URL}/chat_notifications/${username}${query}`).then(res => res.json());
+    },
     createPost: (user, text, parent_id = null) => fetch(`${API_BASE_URL}/create_post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -31,15 +36,22 @@ export default function HomePage({
   showNotification, 
   onNavigateToProfile, 
   onNavigateToHome,
+  onNavigateToFriends,
   notifications, 
-  setNotifications
+  setNotifications,
+  chatTargetUser,
+  onChatTargetConsumed
 }) {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [posts, setPosts] = useState([]);
+  const [chatTarget, setChatTarget] = useState(null);
+  const [registeredUsers, setRegisteredUsers] = useState([]);
   const [newPostText, setNewPostText] = useState("");
   const [selectedImage, setSelectedImage] = useState(null);
   const fileInputRef = useRef(null);
+  const lastNotificationAtRef = useRef(new Date().toISOString());
+  const seenMessageIdsRef = useRef(new Set());
   const [commentTexts, setCommentTexts] = useState({});
 
   // --- Functions ---
@@ -57,12 +69,51 @@ export default function HomePage({
   useEffect(() => {
     fetchPosts();
 
+    const fetchUsers = async () => {
+      try {
+        const users = await api.getUsers(user);
+        if (Array.isArray(users)) {
+          setRegisteredUsers(users);
+        }
+      } catch (error) {
+        console.error('Failed to fetch users:', error);
+      }
+    };
+
+    const fetchIncomingMessages = async () => {
+      try {
+        const incoming = await api.getChatNotifications(user, lastNotificationAtRef.current);
+        if (!Array.isArray(incoming) || incoming.length === 0) {
+          return;
+        }
+
+        incoming.forEach((note) => {
+          if (seenMessageIdsRef.current.has(note.id)) {
+            return;
+          }
+          seenMessageIdsRef.current.add(note.id);
+          showNotification(`New message: ${note.text}`, { type: 'message', user: note.from_user });
+        });
+
+        const lastIncoming = incoming[incoming.length - 1];
+        if (lastIncoming?.created_at) {
+          lastNotificationAtRef.current = lastIncoming.created_at;
+        }
+      } catch (error) {
+        console.error('Failed to fetch incoming message notifications:', error);
+      }
+    };
+
+    fetchUsers();
+    fetchIncomingMessages();
+    const notificationInterval = setInterval(fetchIncomingMessages, 4000);
+
     if (!supabase) {
-      return;
+      return () => clearInterval(notificationInterval);
     }
 
     const channel = supabase
-      .channel('posts_feed_updates')
+      .channel(`home_updates_${user}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts' },
@@ -70,12 +121,29 @@ export default function HomePage({
           fetchPosts();
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+        () => {
+          fetchIncomingMessages();
+        }
+      )
       .subscribe();
 
     return () => {
+      clearInterval(notificationInterval);
       supabase.removeChannel(channel);
     };
-  }, [fetchPosts]);
+  }, [fetchPosts, user, showNotification]);
+
+  useEffect(() => {
+    if (!chatTargetUser) return;
+    setChatTarget(chatTargetUser);
+    setIsChatOpen(true);
+    if (onChatTargetConsumed) {
+      onChatTargetConsumed();
+    }
+  }, [chatTargetUser, onChatTargetConsumed]);
 
   // 2. THIS IS THE FIX for the "Like" button
   const handleLike = (postId, postUser) => {
@@ -137,7 +205,7 @@ export default function HomePage({
 
   return (
     // Black & Green Theme
-    <div className="relative min-h-screen text-gray-200">
+    <div className="relative min-h-screen text-gray-200 bg-neutral-950">
       <div className="mx-auto flex max-w-7xl">
         
         {/* --- LEFT COLUMN: NAVIGATION --- */}
@@ -147,6 +215,7 @@ export default function HomePage({
             onShowChat={() => setIsChatOpen(true)}
             onNavigateToHome={onNavigateToHome}
             onNavigateToProfile={onNavigateToProfile}
+            onNavigateToFriends={onNavigateToFriends}
           />
            <div className="absolute bottom-4 p-4">
              <button onClick={onLogout} className="flex items-center gap-4 rounded-full p-3 text-lg text-gray-200 transition-all hover:bg-neutral-800 hover:text-green-500">
@@ -156,12 +225,15 @@ export default function HomePage({
         </aside>
         
         {/* --- MIDDLE COLUMN: FEED --- */}
-        <main className="w-1/2 min-h-screen border-x border-neutral-700 bg-neutral-900">
+        <main className="w-1/2 min-h-screen border-x border-neutral-800 bg-neutral-900">
           <div className="p-6">
-            <h2 className="mb-6 text-2xl font-bold text-white">Home</h2>
+            <div className="mb-6 rounded-2xl border border-neutral-800 bg-gradient-to-r from-neutral-900 to-neutral-800 p-6">
+              <h2 className="text-2xl font-bold text-white">Welcome, {user}</h2>
+              <p className="text-gray-400 mt-1">Share updates, reply to comments, and stay connected in real time.</p>
+            </div>
             
             {/* --- CREATE POST SECTION --- */}
-            <section className="mb-8 rounded-xl bg-neutral-800 p-6 shadow-md border border-neutral-700">
+            <section className="mb-8 rounded-2xl bg-neutral-800 p-6 shadow-md border border-neutral-700">
               <textarea
                 value={newPostText}
                 onChange={(e) => setNewPostText(e.target.value)}
@@ -202,7 +274,7 @@ export default function HomePage({
               <div className="space-y-6">
                 
                 {Array.isArray(posts) && posts.filter(post => post.status !== 'blocked').map((post) => (
-                  <div key={post.id} className={`rounded-xl bg-neutral-800 overflow-hidden transition-all border ${post.status === 'pending' ? 'border-yellow-500' : 'border-neutral-700'}`}>
+                  <div key={post.id} className={`rounded-2xl bg-neutral-800 overflow-hidden transition-all border shadow-sm ${post.status === 'pending' ? 'border-yellow-500' : 'border-neutral-700'}`}>
                     <div className="p-6">
                       <div className="mb-4 flex justify-between text-sm text-gray-400">
                         <span className="font-bold text-green-500 capitalize">{post.username}</span>
@@ -280,30 +352,44 @@ export default function HomePage({
         
         {/* --- RIGHT COLUMN: WIDGETS --- */}
         <aside className="sticky top-0 h-screen w-1/4 p-6 bg-neutral-900">
-          <div className="rounded-xl bg-neutral-800 shadow-md p-4 border border-neutral-700">
-            <h3 className="mb-4 text-lg font-bold text-white">Who to Follow</h3>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <img src="https://i.pravatar.cc/150?u=alex" alt="alex" className="h-10 w-10 rounded-full" />
-                  <span className="font-semibold text-gray-200">Alex</span>
-                </div>
-                <button className="rounded-full bg-green-500 px-3 py-1 text-sm font-semibold text-black hover:bg-green-600">Follow</button>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <img src="https://i.pravatar.cc/150?u=dana" alt="dana" className="h-10 w-10 rounded-full" />
-                  <span className="font-semibold text-gray-200">Dana</span>
-                </div>
-                <button className="rounded-full bg-green-500 px-3 py-1 text-sm font-semibold text-black hover:bg-green-600">Follow</button>
-              </div>
+          <div className="rounded-2xl bg-neutral-800 shadow-md p-4 border border-neutral-700">
+            <h3 className="mb-4 text-lg font-bold text-white">Registered Users</h3>
+            <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+              {registeredUsers.length === 0 ? (
+                <p className="text-sm text-gray-500">No users found yet.</p>
+              ) : (
+                registeredUsers.map((item) => (
+                  <div key={item.username} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <img src={`https://i.pravatar.cc/150?u=${item.username}`} alt={item.username} className="h-10 w-10 rounded-full" />
+                      <span className="font-semibold text-gray-200 capitalize">{item.username}</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setChatTarget(item.username);
+                        setIsChatOpen(true);
+                      }}
+                      className="rounded-full bg-green-500 px-3 py-1 text-sm font-semibold text-black hover:bg-green-600"
+                    >
+                      Chat
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </aside>
       </div>
 
       {/* 5. Pass the new 'notifications' list down to the panels */}
-      {isChatOpen && <ChatPanel onClose={() => setIsChatOpen(false)} currentUser={user} showNotification={showNotification} />}
+      {isChatOpen && (
+        <ChatPanel
+          onClose={() => setIsChatOpen(false)}
+          currentUser={user}
+          showNotification={showNotification}
+          initialActiveUser={chatTarget}
+        />
+      )}
       {isNotificationsOpen && <NotificationsPanel onClose={() => setIsNotificationsOpen(false)} notifications={notifications} />}
     </div>
   );

@@ -8,6 +8,7 @@ export default function NotificationsPanel({ onClose, notifications }) {
         warning: 'bg-yellow-900/50 text-yellow-300',
         like: 'bg-pink-900/50 text-pink-300', // Using pink for likes
         comment: 'bg-blue-900/50 text-blue-300',
+        message: 'bg-emerald-900/50 text-emerald-300',
     };
 
     return (

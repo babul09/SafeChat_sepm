@@ -14,7 +14,6 @@ import shutil
 from database import get_db_connection
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2 import Error as DatabaseError
-from psycopg2 import Error as DatabaseError
 
 # --- ML model paths & lazy loader ---
 VECT_PATH = os.path.join("models", "vectorizer.joblib")
@@ -129,6 +128,28 @@ class ProfileData(BaseModel):
     profile_image_url: Optional[str] = None
 
 
+class UserListItem(BaseModel):
+    username: str
+
+
+class TypingStatusUpdate(BaseModel):
+    user: str
+    receiver_username: str
+    is_typing: bool
+
+
+class TypingStatusResponse(BaseModel):
+    username: str
+    is_typing: bool
+
+
+class ChatNotificationItem(BaseModel):
+    id: int
+    from_user: str
+    text: str
+    created_at: datetime
+
+
 # --- Helper to safely close cursors ---
 def safe_close_cursor(cursor):
     try:
@@ -150,7 +171,6 @@ def get_user_id(username: str, db):
             return None
         return user_row["id"]
     except DatabaseError as e:
-    except DatabaseError as e:
         print(f"Error in get_user_id: {e}")
         safe_close_cursor(cursor)
         return None
@@ -158,6 +178,51 @@ def get_user_id(username: str, db):
         print(f"Unexpected error in get_user_id: {e}")
         safe_close_cursor(cursor)
         return None
+
+
+def get_chat_usernames(current_username: str, db):
+    cursor = None
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT username FROM users WHERE username <> %s ORDER BY username ASC",
+            (current_username,),
+        )
+        rows = cursor.fetchall() or []
+        return [{"username": row["username"]} for row in rows]
+    except Exception as e:
+        print(f"Error in get_chat_usernames: {e}")
+        return []
+    finally:
+        safe_close_cursor(cursor)
+
+
+def get_incoming_chat_notifications(username: str, db, since: Optional[str] = None):
+    user_id = get_user_id(username, db)
+    if not user_id:
+        return []
+
+    base_query = """
+        SELECT m.id, u.username AS from_user, m.text, m.created_at
+        FROM chat_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.receiver_id = %s AND m.sender_id <> %s
+    """
+    params = [user_id, user_id]
+
+    if since:
+        base_query += " AND m.created_at > %s"
+        params.append(since)
+
+    base_query += " ORDER BY m.created_at ASC LIMIT 50"
+
+    cursor = None
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute(base_query, tuple(params))
+        return cursor.fetchall() or []
+    finally:
+        safe_close_cursor(cursor)
 
 
 # --- Authentication Endpoints ---
@@ -175,7 +240,6 @@ def signup(user: UserSignUp):
         cursor.execute(query, (user.username, user.email, hashed_password.decode("utf-8")))
         db.commit()
         return {"status": "success", "message": "User created successfully!"}
-    except DatabaseError as e:
     except DatabaseError as e:
         db.rollback()
         raise HTTPException(status_code=400, detail="Username or email already exists")
@@ -232,7 +296,22 @@ def send_message(msg: Message):
 
     try:
         sender_id = get_user_id(msg.user, db)
+
         receiver_id = get_user_id(msg.receiver_username, db)
+        if not receiver_id and msg.receiver_username == "Dana":
+            cursor = None
+            try:
+                cursor = db.cursor()
+                hashed_password = bcrypt.hashpw(b"bot_password", bcrypt.gensalt())
+                cursor.execute(
+                    "INSERT INTO users (username, email, password) VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING RETURNING id",
+                    ("Dana", "dana@bot.com", hashed_password.decode("utf-8")),
+                )
+                created = cursor.fetchone()
+                db.commit()
+                receiver_id = created[0] if created else get_user_id("Dana", db)
+            finally:
+                safe_close_cursor(cursor)
 
         if not sender_id or not receiver_id:
             raise HTTPException(status_code=404, detail="Sender or receiver not found")
@@ -253,21 +332,20 @@ def send_message(msg: Message):
             finally:
                 safe_close_cursor(cursor)
 
-            # Optional bot reply logic (bot replies only when user's message is saved)
-            bot_reply_text = f"You said: '{msg.text[:20]}...' Interesting!"
-            cursor = None
-            try:
-                cursor = db.cursor()
-                # Bot sends a reply back to the user (swap sender/receiver)
-                cursor.execute(
-                    "INSERT INTO chat_messages (sender_id, receiver_id, text, status) VALUES (%s, %s, %s, %s)",
-                    (receiver_id, sender_id, bot_reply_text, "approved"),
-                )
-                db.commit()
-            finally:
-                safe_close_cursor(cursor)
+            # Optional bot reply logic (only when user chats with Dana)
+            if msg.receiver_username == "Dana":
+                bot_reply_text = f"You said: '{msg.text[:20]}...' Interesting!"
+                cursor = None
+                try:
+                    cursor = db.cursor()
+                    cursor.execute(
+                        "INSERT INTO chat_messages (sender_id, receiver_id, text, status) VALUES (%s, %s, %s, %s)",
+                        (receiver_id, sender_id, bot_reply_text, "approved"),
+                    )
+                    db.commit()
+                finally:
+                    safe_close_cursor(cursor)
 
-    except DatabaseError as e:
     except DatabaseError as e:
         try:
             db.rollback()
@@ -279,7 +357,7 @@ def send_message(msg: Message):
         pass
 
     # Build latest feed (even if message was blocked, the feed is returned)
-    latest_feed = get_feed_internal(msg.user, db)
+    latest_feed = get_feed_internal(msg.user, db, msg.receiver_username)
     try:
         db.close()
     except Exception:
@@ -288,36 +366,37 @@ def send_message(msg: Message):
     return {"messages": latest_feed, "notification": notification}
 
 
-def get_feed_internal(username: str, db):
+def get_feed_internal(username: str, db, other_username: str = "Dana"):
     user_id = get_user_id(username, db)
     if not user_id:
         print(f"Could not find user_id for {username} in get_feed_internal")
         return []
 
-    # Ensure bot exists (Dana)
-    bot_id = get_user_id("Dana", db)
-    if not bot_id:
+    other_id = get_user_id(other_username, db)
+    if not other_id and other_username == "Dana":
         cursor = None
         try:
             cursor = db.cursor()
             hashed_password = bcrypt.hashpw(b"bot_password", bcrypt.gensalt())
             cursor.execute(
-                "INSERT INTO users (username, email, password) VALUES (%s, %s, %s) RETURNING id",
+                "INSERT INTO users (username, email, password) VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING RETURNING id",
                 ("Dana", "dana@bot.com", hashed_password.decode("utf-8")),
             )
-            bot_id = cursor.fetchone()[0]
+            created = cursor.fetchone()
             db.commit()
-            safe_close_cursor(cursor)
-            print("Created 'Dana' bot user.")
-        except DatabaseError as e:
+            other_id = created[0] if created else get_user_id("Dana", db)
         except DatabaseError as e:
             print(f"Could not create bot user 'Dana': {e}")
             try:
                 db.rollback()
             except Exception:
                 pass
+            other_id = None
+        finally:
             safe_close_cursor(cursor)
-            bot_id = user_id  # fallback
+
+    if not other_id:
+        return []
 
     query = """
         SELECT m.id, m.text, m.status, m.created_at, u.username AS user
@@ -331,7 +410,7 @@ def get_feed_internal(username: str, db):
     cursor = None
     try:
         cursor = db.cursor(dictionary=True)
-        cursor.execute(query, (user_id, bot_id, bot_id, user_id))
+        cursor.execute(query, (user_id, other_id, other_id, user_id))
         messages = cursor.fetchall()
     finally:
         safe_close_cursor(cursor)
@@ -340,16 +419,130 @@ def get_feed_internal(username: str, db):
 
 
 @app.get("/get_feed/{username}", response_model=List[dict])
-def get_feed(username: str):
+def get_feed(username: str, other_username: Optional[str] = None):
     db = get_db_connection()
     if db is None:
         raise HTTPException(status_code=500, detail="Database connection failed")
-    messages = get_feed_internal(username, db)
+    messages = get_feed_internal(username, db, other_username or "Dana")
     try:
         db.close()
     except Exception:
         pass
     return messages
+
+
+@app.get("/get_users/{username}", response_model=List[UserListItem])
+def get_users(username: str):
+    db = get_db_connection()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    users = get_chat_usernames(username, db)
+    try:
+        db.close()
+    except Exception:
+        pass
+    return users
+
+
+@app.post("/typing_status", response_model=TypingStatusResponse)
+def set_typing_status(payload: TypingStatusUpdate):
+    db = get_db_connection()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    sender_id = get_user_id(payload.user, db)
+    receiver_id = get_user_id(payload.receiver_username, db)
+    if not sender_id or not receiver_id:
+        try:
+            db.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=404, detail="Sender or receiver not found")
+
+    cursor = None
+    try:
+        cursor = db.cursor()
+        cursor.execute(
+            """
+            INSERT INTO chat_typing_status (sender_id, receiver_id, is_typing, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (sender_id, receiver_id)
+            DO UPDATE SET is_typing = EXCLUDED.is_typing, updated_at = CURRENT_TIMESTAMP
+            """,
+            (sender_id, receiver_id, payload.is_typing),
+        )
+        db.commit()
+    except DatabaseError as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    finally:
+        safe_close_cursor(cursor)
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return {"username": payload.user, "is_typing": payload.is_typing}
+
+
+@app.get("/typing_status/{username}", response_model=TypingStatusResponse)
+def get_typing_status(username: str, other_username: str):
+    db = get_db_connection()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    current_user_id = get_user_id(username, db)
+    other_user_id = get_user_id(other_username, db)
+    if not current_user_id or not other_user_id:
+        try:
+            db.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=404, detail="User not found")
+
+    cursor = None
+    try:
+        cursor = db.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT is_typing, updated_at
+            FROM chat_typing_status
+            WHERE sender_id = %s AND receiver_id = %s
+            """,
+            (other_user_id, current_user_id),
+        )
+        row = cursor.fetchone()
+    finally:
+        safe_close_cursor(cursor)
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    is_typing = False
+    if row and row.get("is_typing"):
+        updated_at = row.get("updated_at")
+        if updated_at:
+            is_typing = (datetime.utcnow() - updated_at.replace(tzinfo=None)).total_seconds() <= 6
+
+    return {"username": other_username, "is_typing": is_typing}
+
+
+@app.get("/chat_notifications/{username}", response_model=List[ChatNotificationItem])
+def get_chat_notifications(username: str, since: Optional[str] = None):
+    db = get_db_connection()
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    notifications = get_incoming_chat_notifications(username, db, since)
+    try:
+        db.close()
+    except Exception:
+        pass
+    return notifications
 
 
 # --- Create Database Tables (idempotent) ---
@@ -371,21 +564,10 @@ def create_tables():
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(255) UNIQUE NOT NULL,
-                email VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
             CREATE TABLE IF NOT EXISTS posts (
-                id SERIAL PRIMARY KEY,
                 id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
                 text TEXT NOT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending', 'blocked')),
                 status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending', 'blocked')),
                 parent_id INT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -396,11 +578,9 @@ def create_tables():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id SERIAL PRIMARY KEY,
-                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL UNIQUE,
                 bio TEXT,
                 profile_image_url VARCHAR(255),
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
@@ -408,20 +588,29 @@ def create_tables():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id SERIAL PRIMARY KEY,
-                id SERIAL PRIMARY KEY,
                 sender_id INT NOT NULL,
                 receiver_id INT NOT NULL,
                 text TEXT NOT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending')),
                 status VARCHAR(20) NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'pending')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS chat_typing_status (
+                id SERIAL PRIMARY KEY,
+                sender_id INT NOT NULL,
+                receiver_id INT NOT NULL,
+                is_typing BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (sender_id, receiver_id),
+                FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
         db.commit()
         print("Tables (posts, user_profiles, chat_messages) checked/created successfully.")
-    except DatabaseError as e:
     except DatabaseError as e:
         print(f"Error creating tables: {e}")
     finally:
@@ -466,7 +655,6 @@ def create_post(post: NewPost):
         cursor.execute(query, (user_id, post.text, status, post.parent_id))
         new_post_id = cursor.fetchone()[0]
         db.commit()
-        new_post_id = cursor.lastrowid
     except DatabaseError as e:
         try:
             db.rollback()
@@ -585,7 +773,6 @@ def delete_post(post_id: int):
         cursor.execute("DELETE FROM posts WHERE id = %s", (post_id,))
         db.commit()
         affected = cursor.rowcount
-    except DatabaseError as e:
     except DatabaseError as e:
         try:
             db.rollback()

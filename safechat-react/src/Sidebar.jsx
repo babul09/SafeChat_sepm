@@ -7,7 +7,8 @@ export default function Sidebar({
   onShowNotifications, 
   onShowChat, 
   onNavigateToHome, 
-  onNavigateToProfile 
+  onNavigateToProfile,
+  onNavigateToFriends
 }) {
 
   const navItems = [
@@ -15,7 +16,7 @@ export default function Sidebar({
     { name: 'Home', icon: HomeIcon, onClick: onNavigateToHome },
     { name: 'Notifications', icon: BellIcon, onClick: onShowNotifications },
     { name: 'Messages', icon: ChatBubbleOvalLeftEllipsisIcon, onClick: onShowChat },
-    { name: 'Find Friends', icon: MagnifyingGlassIcon, onClick: () => alert("Find Friends clicked!") }, // This is still a placeholder
+    { name: 'Find Friends', icon: MagnifyingGlassIcon, onClick: onNavigateToFriends },
     // 3. Connect the correct onClick functions
     { name: 'Profile', icon: UserIcon, onClick: onNavigateToProfile },
   ];

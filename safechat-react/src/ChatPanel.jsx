@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { PhoneIcon, VideoCameraIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import {
+  PhoneIcon,
+  VideoCameraIcon,
+  MagnifyingGlassIcon,
+  PaperAirplaneIcon,
+  XMarkIcon,
+  ChatBubbleLeftEllipsisIcon,
+} from '@heroicons/react/24/outline';
 import { supabase } from './lib/supabaseClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -8,21 +15,15 @@ const api = {
   getMessages: async (username, otherUsername) => {
     const res = await fetch(`${API_BASE_URL}/get_feed/${username}?other_username=${encodeURIComponent(otherUsername)}`);
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data?.detail || 'Failed to fetch messages');
-    }
+    if (!res.ok) throw new Error(data?.detail || 'Failed to fetch messages');
     return data;
   },
-
   getUsers: async (username) => {
     const res = await fetch(`${API_BASE_URL}/get_users/${username}`);
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data?.detail || 'Failed to fetch users');
-    }
+    if (!res.ok) throw new Error(data?.detail || 'Failed to fetch users');
     return data;
   },
-
   sendMessage: async (senderUser, receiverUser, text) => {
     const res = await fetch(`${API_BASE_URL}/send_message`, {
       method: 'POST',
@@ -30,12 +31,45 @@ const api = {
       body: JSON.stringify({ user: senderUser, receiver_username: receiverUser, text }),
     });
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data?.detail || 'Failed to send message');
-    }
+    if (!res.ok) throw new Error(data?.detail || 'Failed to send message');
     return data;
   },
 };
+
+/* ── Typing indicator dots ── */
+function TypingDots() {
+  return (
+    <span className="flex items-center gap-1 px-1">
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-.3s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:-.15s]" />
+      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
+    </span>
+  );
+}
+
+/* ── Empty user list ── */
+function NoUsersView({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="mx-4 flex w-full max-w-md flex-col items-center rounded-3xl border border-neutral-800 bg-neutral-900 p-10 text-center shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 rounded-full bg-green-500/10 p-5">
+          <ChatBubbleLeftEllipsisIcon className="h-10 w-10 text-green-500/60" />
+        </div>
+        <h3 className="text-lg font-semibold text-white">No conversations yet</h3>
+        <p className="mt-1 text-sm text-gray-500">Find friends from the sidebar to start chatting.</p>
+        <button
+          onClick={onClose}
+          className="mt-6 rounded-full bg-green-500/10 px-6 py-2.5 text-sm font-semibold text-green-400 ring-1 ring-green-500/20 transition hover:bg-green-500 hover:text-black hover:ring-transparent"
+        >
+          Go Back
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function ChatPanel({
   onClose,
@@ -65,35 +99,24 @@ export default function ChatPanel({
   }, [availableUsers, userSearch]);
 
   const scrollToBottom = () => {
-    if (!chatWindowRef.current) return;
-    chatWindowRef.current.scrollTo({
-      top: chatWindowRef.current.scrollHeight,
-      behavior: 'auto',
-    });
+    chatWindowRef.current?.scrollTo({ top: chatWindowRef.current.scrollHeight, behavior: 'auto' });
   };
 
   const fetchMessages = useCallback(async () => {
-    if (!currentUser || !activeUser) return;
-    if (isFetchingMessagesRef.current) return;
-
+    if (!currentUser || !activeUser || isFetchingMessagesRef.current) return;
     isFetchingMessagesRef.current = true;
     try {
-      const fetchedMessages = await api.getMessages(currentUser, activeUser);
-      if (Array.isArray(fetchedMessages)) {
-        setMessages(fetchedMessages);
-      }
-    } catch (error) {
-      console.error('Failed to fetch messages:', error);
+      const fetched = await api.getMessages(currentUser, activeUser);
+      if (Array.isArray(fetched)) setMessages(fetched);
+    } catch (e) {
+      console.error('Failed to fetch messages:', e);
     } finally {
       isFetchingMessagesRef.current = false;
     }
   }, [currentUser, activeUser]);
 
   const scheduleFetchMessages = useCallback(() => {
-    if (messageRefreshTimeoutRef.current) {
-      return;
-    }
-
+    if (messageRefreshTimeoutRef.current) return;
     messageRefreshTimeoutRef.current = setTimeout(() => {
       messageRefreshTimeoutRef.current = null;
       fetchMessages();
@@ -104,21 +127,11 @@ export default function ChatPanel({
     async (isTyping) => {
       const channel = typingChannelRef.current;
       if (!channel || !currentUser || !activeUser) return;
-
       try {
-        await channel.send({
-          type: 'broadcast',
-          event: 'typing',
-          payload: {
-            from: currentUser,
-            to: activeUser,
-            isTyping,
-            at: Date.now(),
-          },
-        });
+        await channel.send({ type: 'broadcast', event: 'typing', payload: { from: currentUser, to: activeUser, isTyping, at: Date.now() } });
         isTypingBroadcastedRef.current = isTyping;
-      } catch (error) {
-        console.error('Failed to broadcast typing event:', error);
+      } catch (e) {
+        console.error('Failed to broadcast typing event:', e);
       }
     },
     [currentUser, activeUser]
@@ -129,267 +142,231 @@ export default function ChatPanel({
     try {
       const users = await api.getUsers(currentUser);
       if (!Array.isArray(users)) return;
-
-      const userList = users.map((item) => item.username).filter(Boolean);
+      const userList = users.map((u) => u.username).filter(Boolean);
       setAvailableUsers(userList);
-
       setActiveUser((prev) => {
-        if (initialActiveUser && userList.includes(initialActiveUser)) {
-          return initialActiveUser;
-        }
-        if (prev && userList.includes(prev)) {
-          return prev;
-        }
+        if (initialActiveUser && userList.includes(initialActiveUser)) return initialActiveUser;
+        if (prev && userList.includes(prev)) return prev;
         return userList[0] || '';
       });
-    } catch (error) {
-      console.error('Failed to fetch users:', error);
+    } catch (e) {
+      console.error('Failed to fetch users:', e);
     }
   }, [currentUser, initialActiveUser]);
 
-  useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   useEffect(() => {
     fetchMessages();
-
-    if (!supabase || !currentUser) {
-      return;
-    }
-
+    if (!supabase || !currentUser) return;
     const channel = supabase
       .channel(`chat_messages_feed_${currentUser}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_messages' }, () => {
-        scheduleFetchMessages();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_messages' }, () => scheduleFetchMessages())
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (!payload) return;
-        const matchesCurrentConversation = payload.from === activeUser && payload.to === currentUser;
-        if (matchesCurrentConversation) {
-          setIsOtherUserTyping(Boolean(payload.isTyping));
-        }
+        if (payload.from === activeUser && payload.to === currentUser) setIsOtherUserTyping(Boolean(payload.isTyping));
       })
       .subscribe();
-
     typingChannelRef.current = channel;
-
-    return () => {
-      typingChannelRef.current = null;
-      supabase.removeChannel(channel);
-    };
+    return () => { typingChannelRef.current = null; supabase.removeChannel(channel); };
   }, [currentUser, activeUser, fetchMessages, scheduleFetchMessages]);
 
   useEffect(() => {
-    if (!activeUser) {
-      setIsOtherUserTyping(false);
-      return;
-    }
-
+    if (!activeUser) { setIsOtherUserTyping(false); return; }
     if (!newMessage.trim()) {
-      if (isTypingBroadcastedRef.current) {
-        sendTypingEvent(false);
-      }
+      if (isTypingBroadcastedRef.current) sendTypingEvent(false);
       return;
     }
-
-    if (!isTypingBroadcastedRef.current) {
-      sendTypingEvent(true);
-    }
-
-    if (typingBroadcastTimeoutRef.current) {
-      clearTimeout(typingBroadcastTimeoutRef.current);
-    }
-
-    typingBroadcastTimeoutRef.current = setTimeout(() => {
-      sendTypingEvent(false);
-    }, 1200);
-
-    return () => {
-      if (typingBroadcastTimeoutRef.current) {
-        clearTimeout(typingBroadcastTimeoutRef.current);
-      }
-    };
+    if (!isTypingBroadcastedRef.current) sendTypingEvent(true);
+    if (typingBroadcastTimeoutRef.current) clearTimeout(typingBroadcastTimeoutRef.current);
+    typingBroadcastTimeoutRef.current = setTimeout(() => { sendTypingEvent(false); }, 1200);
+    return () => { if (typingBroadcastTimeoutRef.current) clearTimeout(typingBroadcastTimeoutRef.current); };
   }, [newMessage, activeUser, sendTypingEvent]);
 
   useEffect(() => {
     return () => {
-      if (typingBroadcastTimeoutRef.current) {
-        clearTimeout(typingBroadcastTimeoutRef.current);
-      }
-      if (messageRefreshTimeoutRef.current) {
-        clearTimeout(messageRefreshTimeoutRef.current);
-      }
-      if (isTypingBroadcastedRef.current) {
-        sendTypingEvent(false);
-      }
+      if (typingBroadcastTimeoutRef.current) clearTimeout(typingBroadcastTimeoutRef.current);
+      if (messageRefreshTimeoutRef.current) clearTimeout(messageRefreshTimeoutRef.current);
+      if (isTypingBroadcastedRef.current) sendTypingEvent(false);
     };
   }, [sendTypingEvent]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
-    setIsOtherUserTyping(false);
-  }, [activeUser]);
-
-  useEffect(() => {
-    if (!refreshToken) return;
-    scheduleFetchMessages();
-  }, [refreshToken, scheduleFetchMessages]);
+  useEffect(() => { scrollToBottom(); }, [messages]);
+  useEffect(() => { setIsOtherUserTyping(false); }, [activeUser]);
+  useEffect(() => { if (refreshToken) scheduleFetchMessages(); }, [refreshToken, scheduleFetchMessages]);
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !activeUser) return;
-
     try {
       const response = await api.sendMessage(currentUser, activeUser, newMessage);
-      if (response.notification) {
-        showNotification(response.notification);
-      }
-      if (Array.isArray(response.messages)) {
-        setMessages(response.messages);
-      }
+      if (response.notification) showNotification(response.notification);
+      if (Array.isArray(response.messages)) setMessages(response.messages);
       setNewMessage('');
-      if (isTypingBroadcastedRef.current) {
-        sendTypingEvent(false);
-      }
+      if (isTypingBroadcastedRef.current) sendTypingEvent(false);
       scheduleFetchMessages();
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      showNotification(`Error: ${error.message || 'Could not send message.'}`);
+    } catch (e) {
+      console.error('Failed to send message:', e);
+      showNotification(`Error: ${e.message || 'Could not send message.'}`);
     }
   };
 
-  const formatMessageTime = (value) => {
-    if (!value) return '';
-    try {
-      return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return '';
-    }
+  const formatTime = (v) => {
+    if (!v) return '';
+    try { return new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+    catch { return ''; }
   };
 
-  if (!availableUsers.length) {
-    return (
-      <div className="fixed inset-0 bg-black/70 z-40" onClick={onClose}>
-        <div
-          className="fixed top-0 right-0 h-full w-full max-w-md flex flex-col bg-neutral-900 shadow-2xl border-l border-neutral-700 p-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-white text-xl font-bold">Messages</h3>
-            <button onClick={onClose} className="text-gray-400 hover:text-white">×</button>
-          </div>
-          <p className="text-gray-400">No registered users found to chat with yet.</p>
-        </div>
-      </div>
-    );
-  }
+  if (!availableUsers.length) return <NoUsersView onClose={onClose} />;
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-40" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="fixed top-0 right-0 h-full w-full max-w-5xl flex bg-neutral-900 shadow-2xl border-l border-neutral-700"
+        className="flex h-[85vh] w-[92vw] max-w-6xl overflow-hidden rounded-3xl border border-neutral-800/70 bg-neutral-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <aside className="w-72 border-r border-neutral-800 bg-neutral-950 flex flex-col">
-          <div className="p-4 border-b border-neutral-800">
-            <h3 className="text-white font-bold text-lg">Messages</h3>
-            <div className="mt-3 relative">
-              <MagnifyingGlassIcon className="h-4 w-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+        {/* ── LEFT: User list ── */}
+        <aside className="flex w-72 shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950/80 backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-neutral-800/60 px-5 py-4">
+            <h3 className="text-base font-semibold tracking-tight text-white">Chats</h3>
+            <button onClick={onClose} className="rounded-lg p-1.5 text-gray-500 transition hover:bg-white/5 hover:text-gray-300">
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Search */}
+          <div className="px-4 py-3">
+            <div className="relative">
+              <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
               <input
                 type="text"
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
-                placeholder="Search chats"
-                className="w-full rounded-full bg-neutral-800 border border-neutral-700 py-2 pl-9 pr-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500"
+                placeholder="Search…"
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900/70 py-2 pl-9 pr-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-green-500/40 focus:ring-1 focus:ring-green-500/20"
               />
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
-            {filteredUsers.map((username) => (
-              <button
-                key={username}
-                onClick={() => setActiveUser(username)}
-                className={`w-full flex items-center gap-3 px-4 py-3 border-b border-neutral-900 text-left transition-colors ${
-                  activeUser === username ? 'bg-neutral-800' : 'hover:bg-neutral-900'
-                }`}
-              >
-                <img src={`https://i.pravatar.cc/150?u=${username}`} alt={username} className="w-10 h-10 rounded-full" />
-                <div>
-                  <p className="text-white font-semibold capitalize">{username}</p>
-                  <p className="text-xs text-gray-500">Tap to open conversation</p>
-                </div>
-              </button>
-            ))}
+          {/* Users */}
+          <div className="flex-1 overflow-y-auto px-2 pb-2">
+            {filteredUsers.map((username) => {
+              const isActive = activeUser === username;
+              return (
+                <button
+                  key={username}
+                  onClick={() => setActiveUser(username)}
+                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all duration-150 ${
+                    isActive
+                      ? 'bg-green-500/10 shadow-[inset_3px_0_0_0_rgba(34,197,94,.6)]'
+                      : 'hover:bg-white/[.04]'
+                  }`}
+                >
+                  <img
+                    src={`https://i.pravatar.cc/150?u=${username}`}
+                    alt={username}
+                    className={`h-10 w-10 rounded-full border transition-colors ${
+                      isActive ? 'border-green-500/60' : 'border-neutral-700'
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium capitalize text-white">{username}</p>
+                    <p className="truncate text-xs text-gray-500">
+                      {isActive ? 'Active now' : 'Tap to chat'}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </aside>
 
-        <section className="flex-1 flex flex-col bg-neutral-900">
-          <header className="flex items-center justify-between p-4 border-b border-neutral-800">
+        {/* ── RIGHT: Conversation ── */}
+        <section className="flex min-w-0 flex-1 flex-col bg-neutral-900">
+          {/* Header */}
+          <header className="flex items-center justify-between border-b border-neutral-800/60 px-6 py-3">
             <div className="flex items-center gap-3">
-              <img src={`https://i.pravatar.cc/150?u=${activeUser}`} alt={activeUser} className="w-10 h-10 rounded-full" />
+              <div className="relative">
+                <img src={`https://i.pravatar.cc/150?u=${activeUser}`} alt={activeUser} className="h-9 w-9 rounded-full border border-neutral-700" />
+                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-neutral-900 bg-green-500" />
+              </div>
               <div>
-                <p className="text-white font-semibold capitalize">{activeUser}</p>
-                <p className="text-xs text-gray-400">{isOtherUserTyping ? 'typing...' : 'online'}</p>
+                <p className="text-sm font-semibold capitalize text-white">{activeUser}</p>
+                <p className="text-[11px] text-gray-500">
+                  {isOtherUserTyping ? (
+                    <span className="flex items-center gap-1 text-green-400">
+                      typing <TypingDots />
+                    </span>
+                  ) : (
+                    'Online'
+                  )}
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-4 text-gray-400">
-              <PhoneIcon className="h-6 w-6 cursor-pointer transition-colors hover:text-green-500" />
-              <VideoCameraIcon className="h-6 w-6 cursor-pointer transition-colors hover:text-green-500" />
-              <button onClick={onClose} className="text-gray-400 hover:text-white">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+            <div className="flex items-center gap-2 text-gray-500">
+              <button className="rounded-lg p-2 transition hover:bg-white/5 hover:text-green-400" title="Voice call">
+                <PhoneIcon className="h-5 w-5" />
+              </button>
+              <button className="rounded-lg p-2 transition hover:bg-white/5 hover:text-green-400" title="Video call">
+                <VideoCameraIcon className="h-5 w-5" />
+              </button>
+              <button onClick={onClose} className="rounded-lg p-2 transition hover:bg-white/5 hover:text-red-400" title="Close chat">
+                <XMarkIcon className="h-5 w-5" />
               </button>
             </div>
           </header>
 
-          <div ref={chatWindowRef} className="flex-grow p-5 space-y-4 overflow-y-auto bg-neutral-900">
-            {Array.isArray(messages) && messages.map((msg, index) => (
-              <div key={index} className={`flex ${msg.user === currentUser ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={`max-w-md rounded-2xl px-4 py-2 ${
-                    msg.user === currentUser
-                      ? 'bg-green-500 text-black rounded-br-sm'
-                      : 'bg-neutral-800 text-gray-200 rounded-bl-sm border border-neutral-700'
-                  }`}
-                >
-                  <p className="text-sm">{msg.text}</p>
-                  <p className={`mt-1 text-[11px] ${msg.user === currentUser ? 'text-black/70' : 'text-gray-500'}`}>
-                    {formatMessageTime(msg.created_at)}
-                  </p>
-                </div>
+          {/* Messages */}
+          <div ref={chatWindowRef} className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
+            {Array.isArray(messages) && messages.length === 0 && (
+              <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                No messages yet. Say hello!
               </div>
-            ))}
-
+            )}
+            {Array.isArray(messages) && messages.map((msg, idx) => {
+              const isMine = msg.user === currentUser;
+              return (
+                <div key={idx} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[65%] rounded-2xl px-4 py-2.5 text-sm transition ${
+                      isMine
+                        ? 'bg-green-500 text-black shadow-[0_0_12px_rgba(34,197,94,.15)] rounded-br-md'
+                        : 'bg-neutral-800/80 text-gray-200 border border-neutral-700/60 rounded-bl-md'
+                    }`}
+                  >
+                    <p className="leading-relaxed">{msg.text}</p>
+                    <p className={`mt-1 text-right text-[10px] ${isMine ? 'text-black/60' : 'text-gray-500'}`}>
+                      {formatTime(msg.created_at)}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
             {isOtherUserTyping && (
               <div className="flex justify-start">
-                <div className="rounded-2xl rounded-bl-sm px-4 py-2 bg-neutral-800 border border-neutral-700 text-gray-300 text-sm">
-                  {activeUser} is typing...
-                </div>
+                <span className="rounded-2xl rounded-bl-md border border-neutral-700/60 bg-neutral-800/60 px-4 py-2 text-xs text-gray-400">
+                  typing<TypingDots />
+                </span>
               </div>
             )}
           </div>
 
-          <form onSubmit={handleSendMessage} className="p-4 border-t border-neutral-800 flex gap-3">
+          {/* Input */}
+          <form onSubmit={handleSendMessage} className="flex items-center gap-3 border-t border-neutral-800/60 px-5 py-4">
             <input
               type="text"
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
-              placeholder={`Message ${activeUser}...`}
+              placeholder={`Message ${activeUser}…`}
               disabled={!activeUser}
-              className="w-full px-4 py-3 text-white bg-neutral-800 border border-neutral-700 rounded-full focus:outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-500"
+              className="flex-1 rounded-full border border-neutral-700/60 bg-neutral-800/60 px-5 py-2.5 text-sm text-white placeholder-gray-500 outline-none transition focus:border-green-500/40 focus:ring-2 focus:ring-green-500/15 disabled:opacity-40"
             />
             <button
               type="submit"
-              disabled={!activeUser}
-              className="rounded-full bg-green-500 px-5 py-3 text-black font-semibold transition-colors hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!activeUser || !newMessage.trim()}
+              className="group grid h-10 w-10 shrink-0 place-items-center rounded-full bg-green-500 text-black shadow-md transition-all duration-200 hover:bg-green-400 hover:shadow-[0_0_14px_rgba(34,197,94,.35)] disabled:opacity-30 disabled:hover:shadow-md"
             >
-              Send
+              <PaperAirplaneIcon className="h-5 w-5 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
             </button>
           </form>
         </section>

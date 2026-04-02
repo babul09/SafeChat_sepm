@@ -71,3 +71,4 @@ safechat-react/node_modules/
 backend-ml/models/ 
 backend-ml/*.joblib 
 safechat-react/.env.example
+CLAUDE.md

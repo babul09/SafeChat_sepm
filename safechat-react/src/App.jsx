@@ -1,16 +1,20 @@
 // src/App.jsx
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import HomePage from './HomePage';
 import AuthPage from './AuthPage';
 import Notification from './Notification';
 import ProfilePage from './ProfilePage';
 import FindFriendsPage from './FindFriendsPage';
+import AdminPanel from './AdminPanel';
+import AdminLogin from './AdminLogin';
 
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [notification, setNotification] = useState(null); // This is for the pop-up
   const [currentPage, setCurrentPage] = useState('home');
   const [chatTargetUser, setChatTargetUser] = useState(null);
+  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [isAdminRoute, setIsAdminRoute] = useState(window.location.pathname === '/admin');
   
   // --- NEW: This is the live list for the "Bell Icon" panel ---
   const [notifications, setNotifications] = useState([]);
@@ -52,7 +56,51 @@ function App() {
   };
   const navigateToProfile = () => setCurrentPage('profile');
   const navigateToFriends = () => setCurrentPage('friends');
+  const handleAdminLogin = (username) => {
+    setAdminAuthenticated(true);
+  };
+  const handleAdminLogout = () => {
+    setAdminAuthenticated(false);
+    setIsAdminRoute(false);
+    window.history.pushState({}, '', '/');
+  };
   const handleChatTargetConsumed = useCallback(() => setChatTargetUser(null), []);
+
+  // Check for admin route on component mount
+  useEffect(() => {
+    const handlePopState = () => {
+      const isAdmin = window.location.pathname === '/admin';
+      setIsAdminRoute(isAdmin);
+      if (!isAdmin) {
+        setAdminAuthenticated(false);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Handle /admin route access
+  if (isAdminRoute) {
+    if (!adminAuthenticated) {
+      return (
+        <AdminLogin 
+          onLoginSuccess={handleAdminLogin}
+          onCancel={() => {
+            setIsAdminRoute(false);
+            window.history.pushState({}, '', '/');
+          }}
+        />
+      );
+    }
+    return (
+      <AdminPanel
+        user={currentUser}
+        onNavigateToHome={() => setIsAdminRoute(false)}
+        onLogout={handleAdminLogout}
+        showNotification={showNotification}
+      />
+    );
+  }
 
   // This function decides which main page to render
   const renderPage = () => {
@@ -65,8 +113,8 @@ function App() {
           onNavigateToProfile={navigateToProfile}
           onNavigateToHome={navigateToHome}
           onNavigateToFriends={navigateToFriends}
-          notifications={notifications} // <-- 3. Pass the new list down
-          setNotifications={setNotifications} // <-- 4. Pass the "setter" function down
+          notifications={notifications}
+          setNotifications={setNotifications}
           chatTargetUser={chatTargetUser}
           onChatTargetConsumed={handleChatTargetConsumed}
         />
@@ -96,6 +144,7 @@ function App() {
         />
       );
     }
+
   };
 
   return (

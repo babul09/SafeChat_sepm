@@ -6,8 +6,9 @@ import {
   PaperAirplaneIcon,
   XMarkIcon,
   ChatBubbleLeftEllipsisIcon,
+  FlagIcon,
 } from '@heroicons/react/24/outline';
-import { supabase } from './lib/supabaseClient';
+import { supabase, supabaseRealtimeEnabled } from './lib/supabaseClient';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
@@ -32,6 +33,21 @@ const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.detail || 'Failed to send message');
+    return data;
+  },
+  reportMessage: async (reporterUsername, messageId, reason, description) => {
+    const res = await fetch(`${API_BASE_URL}/report_message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reporter_username: reporterUsername,
+        message_id: messageId,
+        reason,
+        description,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.detail || 'Failed to report message');
     return data;
   },
 };
@@ -84,6 +100,10 @@ export default function ChatPanel({
   const [newMessage, setNewMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportReason, setReportReason] = useState('spam');
+  const [reportDescription, setReportDescription] = useState('');
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
 
   const chatWindowRef = useRef(null);
   const typingBroadcastTimeoutRef = useRef(null);
@@ -158,7 +178,7 @@ export default function ChatPanel({
 
   useEffect(() => {
     fetchMessages();
-    if (!supabase || !currentUser) return;
+    if (!supabase || !supabaseRealtimeEnabled || !currentUser) return;
     const channel = supabase
       .channel(`chat_messages_feed_${currentUser}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_messages' }, () => scheduleFetchMessages())
@@ -211,6 +231,35 @@ export default function ChatPanel({
     }
   };
 
+  const openReportDialog = (message) => {
+    setReportTarget(message);
+    setReportReason('spam');
+    setReportDescription('');
+  };
+
+  const closeReportDialog = () => {
+    if (isSubmittingReport) return;
+    setReportTarget(null);
+    setReportReason('spam');
+    setReportDescription('');
+  };
+
+  const submitReport = async (e) => {
+    e.preventDefault();
+    if (!reportTarget || !currentUser) return;
+    setIsSubmittingReport(true);
+    try {
+      await api.reportMessage(currentUser, reportTarget.id, reportReason, reportDescription.trim() || null);
+      showNotification('Message reported successfully.');
+      closeReportDialog();
+    } catch (error) {
+      console.error('Failed to report message:', error);
+      showNotification(`Error: ${error.message || 'Could not report message.'}`);
+    } finally {
+      setIsSubmittingReport(false);
+    }
+  };
+
   const formatTime = (v) => {
     if (!v) return '';
     try { return new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
@@ -220,7 +269,78 @@ export default function ChatPanel({
   if (!availableUsers.length) return <NoUsersView onClose={onClose} />;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+    <>
+      {reportTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm"
+          onClick={closeReportDialog}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl border border-neutral-800 bg-neutral-950 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Report message</h3>
+              <button onClick={closeReportDialog} className="rounded-lg p-1.5 text-gray-500 transition hover:bg-white/5 hover:text-gray-300">
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-900 p-4 text-sm text-gray-300">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Message preview</p>
+              <p className="mt-2 leading-relaxed">{reportTarget.text}</p>
+            </div>
+
+            <form onSubmit={submitReport} className="mt-4 space-y-4">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-gray-200">Reason</span>
+                <select
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-white outline-none transition focus:border-green-500/40 focus:ring-2 focus:ring-green-500/15"
+                >
+                  <option value="spam">Spam or unsolicited</option>
+                  <option value="harassment">Harassment or bullying</option>
+                  <option value="hate">Hate speech</option>
+                  <option value="scam">Scam or fraud</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium text-gray-200">Additional details</span>
+                <textarea
+                  value={reportDescription}
+                  onChange={(e) => setReportDescription(e.target.value)}
+                  rows={4}
+                  placeholder="Optional context for moderation"
+                  className="w-full resize-none rounded-xl border border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-white placeholder-gray-500 outline-none transition focus:border-green-500/40 focus:ring-2 focus:ring-green-500/15"
+                />
+              </label>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeReportDialog}
+                  className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-gray-300 transition hover:bg-white/5"
+                  disabled={isSubmittingReport}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingReport}
+                  className="rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSubmittingReport ? 'Sending…' : 'Submit report'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
         className="flex h-[85vh] w-[92vw] max-w-6xl overflow-hidden rounded-3xl border border-neutral-800/70 bg-neutral-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -326,18 +446,33 @@ export default function ChatPanel({
             {Array.isArray(messages) && messages.map((msg, idx) => {
               const isMine = msg.user === currentUser;
               return (
-                <div key={idx} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[65%] rounded-2xl px-4 py-2.5 text-sm transition ${
-                      isMine
-                        ? 'bg-green-500 text-black shadow-[0_0_12px_rgba(34,197,94,.15)] rounded-br-md'
-                        : 'bg-neutral-800/80 text-gray-200 border border-neutral-700/60 rounded-bl-md'
-                    }`}
-                  >
-                    <p className="leading-relaxed">{msg.text}</p>
-                    <p className={`mt-1 text-right text-[10px] ${isMine ? 'text-black/60' : 'text-gray-500'}`}>
-                      {formatTime(msg.created_at)}
-                    </p>
+                <div key={msg.id ?? idx} className={`group flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                  <div className="relative max-w-[65%]">
+                    {!isMine && (
+                      <button
+                        type="button"
+                        onClick={() => openReportDialog(msg)}
+                        className="absolute -right-2 -top-2 rounded-full border border-red-500/30 bg-neutral-950 px-2 py-1 text-[10px] font-medium text-red-300 opacity-0 shadow-lg transition hover:bg-red-500/10 group-hover:opacity-100"
+                        title="Report message"
+                      >
+                        <span className="flex items-center gap-1">
+                          <FlagIcon className="h-3 w-3" />
+                          Report
+                        </span>
+                      </button>
+                    )}
+                    <div
+                      className={`rounded-2xl px-4 py-2.5 text-sm transition ${
+                        isMine
+                          ? 'bg-green-500 text-black shadow-[0_0_12px_rgba(34,197,94,.15)] rounded-br-md'
+                          : 'bg-neutral-800/80 text-gray-200 border border-neutral-700/60 rounded-bl-md'
+                      }`}
+                    >
+                      <p className="leading-relaxed">{msg.text}</p>
+                      <p className={`mt-1 text-right text-[10px] ${isMine ? 'text-black/60' : 'text-gray-500'}`}>
+                        {formatTime(msg.created_at)}
+                      </p>
+                    </div>
                   </div>
                 </div>
               );
@@ -372,5 +507,6 @@ export default function ChatPanel({
         </section>
       </div>
     </div>
+    </>
   );
 }

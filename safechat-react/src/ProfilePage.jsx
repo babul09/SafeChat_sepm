@@ -5,28 +5,28 @@ import { CameraIcon, CheckCircleIcon, PencilIcon, XMarkIcon } from '@heroicons/r
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
 const api = {
-  changeProfilePicture: async (userId, imageUrl) => {
-    const res = await fetch(`${API_BASE_URL}/change_profile_picture`, {
+  changeProfilePicture: async (userId, imageUrl, currentBio = '') => {
+    const res = await fetch(`${API_BASE_URL}/update_profile/${encodeURIComponent(userId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: userId, avatar_url: imageUrl }),
+      body: JSON.stringify({ bio: currentBio, profile_image_url: imageUrl }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.detail || 'Failed to change profile picture');
     return data;
   },
-  updateBio: async (userId, newBio) => {
-    const res = await fetch(`${API_BASE_URL}/update_bio`, {
+  updateBio: async (userId, newBio, currentProfileImageUrl = null) => {
+    const res = await fetch(`${API_BASE_URL}/update_profile/${encodeURIComponent(userId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: userId, new_bio: newBio }),
+      body: JSON.stringify({ bio: newBio, profile_image_url: currentProfileImageUrl }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.detail || 'Failed to update bio');
     return data;
   },
   getProfile: async (userId) => {
-    const res = await fetch(`${API_BASE_URL}/profile/${encodeURIComponent(userId)}`);
+    const res = await fetch(`${API_BASE_URL}/get_profile/${encodeURIComponent(userId)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data?.detail || 'Failed to fetch profile');
     return data;
@@ -111,7 +111,7 @@ export default function ProfilePage({
       } catch (e) {
         console.error('Profile fetch failed:', e);
         if (!cancelled) {
-          setProfile({ username: user, bio: '', avatar_url: null });
+          setProfile({ username: user, bio: '', profile_image_url: null });
           setBioInput('');
         }
       } finally {
@@ -129,8 +129,8 @@ export default function ProfilePage({
     setChangingAvatar(true);
     setAvatarFeedback(null);
     try {
-      const result = await api.changeProfilePicture(user, avatarInput);
-      setProfile((prev) => prev ? { ...prev, avatar_url: result.avatar_url || avatarInput } : prev);
+      const result = await api.changeProfilePicture(user, avatarInput, profile?.bio || '');
+      setProfile((prev) => prev ? { ...prev, profile_image_url: result.profile_image_url || avatarInput } : prev);
       setAvatarFeedback({ message: 'Profile picture updated!', type: 'success' });
       setAvatarInput('');
       setTimeout(() => setAvatarFeedback(null), 3000);
@@ -147,7 +147,7 @@ export default function ProfilePage({
     setSavingBio(true);
     setBioFeedback(null);
     try {
-      await api.updateBio(user, bioInput);
+      await api.updateBio(user, bioInput, profile?.profile_image_url || null);
       setProfile((prev) => prev ? { ...prev, bio: bioInput } : prev);
       setBioFeedback({ message: 'Bio updated!', type: 'success' });
       setEditingBio(false);
@@ -208,7 +208,7 @@ export default function ProfilePage({
                 {/* ── Avatar Section ── */}
                 <section className="rounded-2xl border border-neutral-800/70 bg-neutral-900/40 p-6 backdrop-blur-sm">
                   <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-start">
-                    <Avatar url={profile?.avatar_url} username={user} size="xl" />
+                    <Avatar url={profile?.profile_image_url} username={user} size="xl" />
                     <div className="flex-1 text-center sm:text-left">
                       <h3 className="text-lg font-semibold capitalize text-white">{user}</h3>
                       <p className="text-sm text-gray-500">Username</p>

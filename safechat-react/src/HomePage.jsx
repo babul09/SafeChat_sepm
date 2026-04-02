@@ -7,7 +7,7 @@ import CommentIcon from './icons/CommentIcon';
 import ImageIcon from './icons/ImageIcon';
 import Sidebar from './Sidebar';
 import { TrashIcon } from '@heroicons/react/24/outline';
-import { supabase } from './lib/supabaseClient';
+import { supabase, supabaseRealtimeEnabled } from './lib/supabaseClient';
 
 // --- API Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -37,6 +37,7 @@ export default function HomePage({
   onNavigateToProfile, 
   onNavigateToHome,
   onNavigateToFriends,
+  onNavigateToAdmin,
   notifications, 
   setNotifications,
   chatTargetUser,
@@ -115,7 +116,7 @@ export default function HomePage({
     fetchIncomingMessages();
     const notificationInterval = setInterval(fetchIncomingMessages, 4000);
 
-    if (!supabase) {
+    if (!supabase || !supabaseRealtimeEnabled) {
       return () => clearInterval(notificationInterval);
     }
 
@@ -223,6 +224,7 @@ export default function HomePage({
             onNavigateToHome={onNavigateToHome}
             onNavigateToProfile={onNavigateToProfile}
             onNavigateToFriends={onNavigateToFriends}
+            onNavigateToAdmin={onNavigateToAdmin}
           />
            <div className="absolute bottom-4 p-4">
              <button onClick={onLogout} className="flex items-center gap-4 rounded-full p-3 text-lg text-gray-200 transition-all hover:bg-neutral-800 hover:text-green-500">
